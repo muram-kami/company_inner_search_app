@@ -25,6 +25,8 @@ LINK_SOURCE_ICON = ":material/link: "
 WARNING_ICON = ":material/warning:"
 ERROR_ICON = ":material/error:"
 SPINNER_TEXT = "回答生成中..."
+# 問題4の解答
+SELECT_MODE_TITLE = "利用目的"
 
 
 # ==========================================
@@ -41,7 +43,9 @@ APP_BOOT_MESSAGE = "アプリが起動されました。"
 # ==========================================
 MODEL = "gpt-4o-mini"
 TEMPERATURE = 0.5
-
+# 問題2の解答
+CHUNK_SIZE = 500  # ドキュメントを分割する際のチャンクサイズ
+CHUNK_OVERLAP = 50  # チャンク間の重複サイズ
 
 # ==========================================
 # RAG参照用のデータソース系

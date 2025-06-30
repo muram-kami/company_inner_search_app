@@ -112,30 +112,33 @@ def initialize_retriever():
     # RAGの参照先となるデータソースの読み込み
     docs_all = load_data_sources()
 
-    # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
-    for doc in docs_all:
-        doc.page_content = adjust_string(doc.page_content)
-        for key in doc.metadata:
-            doc.metadata[key] = adjust_string(doc.metadata[key])
+    # # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
+    # for doc in docs_all:
+    #     doc.page_content = adjust_string(doc.page_content)
+    #     for key in doc.metadata:
+    #         doc.metadata[key] = adjust_string(doc.metadata[key])
     
     # 埋め込みモデルの用意
     embeddings = OpenAIEmbeddings()
     
-    # チャンク分割用のオブジェクトを作成
-    text_splitter = CharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50,
-        separator="\n"
-    )
+    # # チャンク分割用のオブジェクトを作成
+    # text_splitter = CharacterTextSplitter(
+    #     chunk_size=ct.CHUNK_SIZE,  # 定数で定義したチャンクサイズを使用
+    #     chunk_overlap=ct.CHUNK_OVERLAP,  # 定数で定義したチャンク間の重複サイズを使用
+    #     separator="\n"
+    # )
 
-    # チャンク分割を実施
-    splitted_docs = text_splitter.split_documents(docs_all)
+    # # チャンク分割を実施
+    # splitted_docs = text_splitter.split_documents(docs_all)
 
+    # 既存のコードに影響を与えないようにする
+    splitted_docs = docs_all
+    
     # ベクターストアの作成
     db = Chroma.from_documents(splitted_docs, embedding=embeddings)
 
     # ベクターストアを検索するRetrieverの作成
-    st.session_state.retriever = db.as_retriever(search_kwargs={"k": 3})
+    st.session_state.retriever = db.as_retriever(search_kwargs={"k": 5}) # 問題1の解答
 
 
 def initialize_session_state():
@@ -207,16 +210,73 @@ def file_load(path, docs_all):
         path: ファイルパス
         docs_all: データソースを格納する用のリスト
     """
+    # 問題4に対する修正
+    import fitz # PyMuPDFを読み込み
+
     # ファイルの拡張子を取得
-    file_extension = os.path.splitext(path)[1]
+    file_extension = os.path.splitext(path)[1].lower()
     # ファイル名（拡張子を含む）を取得
     file_name = os.path.basename(path)
 
     # 想定していたファイル形式の場合のみ読み込む
     if file_extension in ct.SUPPORTED_EXTENSIONS:
-        # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
-        loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
-        docs = loader.load()
+        if file_extension == ".pdf":
+            # PDFをページ単位で読み込み、チャンクに分割する
+            doc = fitz.open(path)  # PyMuPDFを使用してPDFを開く
+            text_splitter = CharacterTextSplitter(
+                chunk_size=ct.CHUNK_SIZE,  # 定数で定義したチャンクサイズを使用
+                chunk_overlap=ct.CHUNK_OVERLAP,  # 定数で定義したチャンク間の重複サイズを使用
+                separator="\n"
+            )
+            for page_number in range(len(doc)):
+                page = doc.load_page(page_number)  # ページを読み込む
+                page_text = page.get_text()  # ページのテキストを取得
+
+                # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
+                page_text = adjust_string(page_text)
+
+                if not page_text.strip():
+                    # ページが空の場合はスキップ
+                    continue
+
+                chunks = text_splitter.split_text(page_text)  # テキストをチャンクに分割
+
+                for chunk in chunks:
+                    docs_all.append(Document(
+                        page_content=chunk,
+                        metadata={
+                            "source": path,
+                            "file_name": file_name,
+                            "page_number": page_number + 1  # ページ番号は1から始まる
+                        }
+                    ))
+        
+        else:
+            # 従来通り、LangChainのドキュメントローダーを使用してファイル読み込み
+            # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
+            loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
+            docs = loader.load()
+
+            # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
+            for doc in docs:
+                doc.page_content = adjust_string(doc.page_content)
+                for key in doc.metadata:
+                    doc.metadata[key] = adjust_string(doc.metadata[key])
+                    
+            # チャンク分割
+            text_splitter = CharacterTextSplitter(
+                chunk_size=ct.CHUNK_SIZE,  # 定数で定義したチャンクサイズを使用
+                chunk_overlap=ct.CHUNK_OVERLAP,  # 定数で定義したチャンク間の重複サイズを使用
+                separator="\n"
+            )
+            docs = text_splitter.split_documents(docs)
+
+            # 読み込んだドキュメントにメタデータを追加
+            for doc in docs:
+                doc.metadata["source"] = path
+                doc.metadata["file_name"] = file_name
+
+        # 読み込んだドキュメントをリストに追加
         docs_all.extend(docs)
 
 
