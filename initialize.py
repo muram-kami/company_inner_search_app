@@ -13,7 +13,8 @@ import sys
 import unicodedata
 from dotenv import load_dotenv
 import streamlit as st
-from docx import Document
+from docx import Document as DocxDocument
+from langchain_core.documents import Document
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -210,71 +211,77 @@ def file_load(path, docs_all):
         path: ファイルパス
         docs_all: データソースを格納する用のリスト
     """
-    # 問題4に対する修正
-    import fitz # PyMuPDFを読み込み
+    import fitz  # PyMuPDFの読み込み
 
     # ファイルの拡張子を取得
     file_extension = os.path.splitext(path)[1].lower()
     # ファイル名（拡張子を含む）を取得
     file_name = os.path.basename(path)
 
-    # 想定していたファイル形式の場合のみ読み込む
+    # 想定しているファイル形式の場合のみ読み込む
     if file_extension in ct.SUPPORTED_EXTENSIONS:
+        docs = []
         if file_extension == ".pdf":
             # PDFをページ単位で読み込み、チャンクに分割する
-            doc = fitz.open(path)  # PyMuPDFを使用してPDFを開く
+            doc = fitz.open(path)  # PyMuPDFでPDFを開く
             text_splitter = CharacterTextSplitter(
-                chunk_size=ct.CHUNK_SIZE,  # 定数で定義したチャンクサイズを使用
-                chunk_overlap=ct.CHUNK_OVERLAP,  # 定数で定義したチャンク間の重複サイズを使用
+                chunk_size=ct.CHUNK_SIZE,
+                chunk_overlap=ct.CHUNK_OVERLAP,
                 separator="\n"
             )
             for page_number in range(len(doc)):
-                page = doc.load_page(page_number)  # ページを読み込む
-                page_text = page.get_text()  # ページのテキストを取得
+                page = doc.load_page(page_number)
+                page_text = page.get_text()
 
-                # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
+                # Windowsの場合、Unicode正規化とcp932で表現できない文字を除去
                 page_text = adjust_string(page_text)
 
-                if not page_text.strip():
-                    # ページが空の場合はスキップ
+                # 空ページはスキップ
+                if not page_text or not str(page_text).strip():
                     continue
 
-                chunks = text_splitter.split_text(page_text)  # テキストをチャンクに分割
+                chunks = text_splitter.split_text(page_text)
 
                 for chunk in chunks:
-                    docs_all.append(Document(
+                    docs.append(Document(
                         page_content=chunk,
                         metadata={
                             "source": path,
                             "file_name": file_name,
-                            "page_number": page_number + 1  # ページ番号は1から始まる
+                            "page": page_number + 1
                         }
                     ))
-        
-        else:
-            # 従来通り、LangChainのドキュメントローダーを使用してファイル読み込み
-            # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
-            loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
-            docs = loader.load()
 
-            # OSがWindowsの場合、Unicode正規化と、cp932（Windows用の文字コード）で表現できない文字を除去
+        else:
+            # LangChainのドキュメントローダーでファイル読み込み
+            loader_class = ct.SUPPORTED_EXTENSIONS[file_extension]
+            loader = loader_class(path)
+            if hasattr(loader, "load") and callable(getattr(loader, "load")):
+                docs = loader.load()
+            else:
+                raise AttributeError(f"The loader for extension '{file_extension}' does not have a callable 'load' method.")
+
+            # Windowsの場合、Unicode正規化とcp932で表現できない文字を除去
             for doc in docs:
-                doc.page_content = adjust_string(doc.page_content)
-                for key in doc.metadata:
-                    doc.metadata[key] = adjust_string(doc.metadata[key])
-                    
+                if hasattr(doc, "page_content"):
+                    doc.page_content = adjust_string(doc.page_content)
+                if hasattr(doc, "metadata"):
+                    for key in doc.metadata:
+                        doc.metadata[key] = adjust_string(doc.metadata[key])
+
             # チャンク分割
             text_splitter = CharacterTextSplitter(
-                chunk_size=ct.CHUNK_SIZE,  # 定数で定義したチャンクサイズを使用
-                chunk_overlap=ct.CHUNK_OVERLAP,  # 定数で定義したチャンク間の重複サイズを使用
+                chunk_size=ct.CHUNK_SIZE,
+                chunk_overlap=ct.CHUNK_OVERLAP,
                 separator="\n"
             )
             docs = text_splitter.split_documents(docs)
 
-            # 読み込んだドキュメントにメタデータを追加
+            # メタデータ追加
             for doc in docs:
-                doc.metadata["source"] = path
-                doc.metadata["file_name"] = file_name
+                if hasattr(doc, "metadata"):
+                    doc.metadata["source"] = path
+                    doc.metadata["file_name"] = file_name
 
         # 読み込んだドキュメントをリストに追加
         docs_all.extend(docs)
